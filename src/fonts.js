@@ -17,7 +17,8 @@
 /* globals assert, bytesToString, CIDToUnicodeMaps, error, ExpertCharset,
            ExpertSubsetCharset, FileReaderSync, globalScope, GlyphsUnicode,
            info, isArray, isNum, ISOAdobeCharset, isWorker, PDFJS, Stream,
-           stringToBytes, TextDecoder, TODO, warn, Lexer, Util */
+           stringToBytes, TextDecoder, TODO, warn, Lexer, Util, shadow,
+           FontRendererFactory */
 
 'use strict';
 
@@ -39,6 +40,8 @@ var HINTING_ENABLED = false;
 var SEAC_ANALYSIS_ENABLED = false;
 
 var FONT_IDENTITY_MATRIX = [0.001, 0, 0, 0.001, 0, 0];
+
+PDFJS.disableFontFace = false;
 
 var FontFlags = {
   FixedPitch: 1,
@@ -3019,6 +3022,11 @@ var Font = (function FontClosure() {
     mimetype: null,
     encoding: null,
 
+    get renderer() {
+      var renderer = FontRendererFactory.create(this);
+      return shadow(this, 'renderer', renderer);
+    },
+
     exportData: function Font_exportData() {
       var data = {};
       for (var i in this) {
@@ -3870,6 +3878,9 @@ var Font = (function FontClosure() {
         }
       }
 
+      // The following steps modify the original font data, making copy
+      font = new Stream(new Uint8Array(font.getBytes()));
+
       // Check that required tables are present
       var requiredTables = ['OS/2', 'cmap', 'head', 'hhea',
                              'hmtx', 'maxp', 'name', 'post'];
@@ -4564,6 +4575,11 @@ var Font = (function FontClosure() {
     bindDOM: function Font_bindDOM() {
       if (!this.data)
         return null;
+
+      if (PDFJS.disableFontFace) {
+        this.disableFontFace = true;
+        return null;
+      }
 
       var data = bytesToString(this.data);
       var fontName = this.loadedName;
@@ -5315,11 +5331,8 @@ var Type1Parser = (function Type1ParserClosure() {
           case 'Subrs':
             var num = this.readInt();
             this.getToken(); // read in 'array'
-            for (var j = 0; j < num; ++j) {
-              token = this.getToken(); // read in 'dup'
+            while ((token = this.getToken()) === 'dup') {
               var index = this.readInt();
-              if (index > j)
-                j = index;
               var length = this.readInt();
               this.getToken(); // read in 'RD' or '-|'
               var data = stream.makeSubStream(stream.pos + 1, length);
